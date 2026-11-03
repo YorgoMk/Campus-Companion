@@ -12,7 +12,8 @@ enum class RefreshStatus { Idle, Queued, Refreshing, Current, Failed }
 
 data class RefreshState(
     val status: RefreshStatus = RefreshStatus.Idle,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val requestId: String? = null
 )
 
 class EventsRefreshScheduler(private val workManager: WorkManager) {
@@ -26,7 +27,8 @@ class EventsRefreshScheduler(private val workManager: WorkManager) {
                 WorkInfo.State.FAILED -> RefreshStatus.Failed
                 else -> RefreshStatus.Idle
             },
-            errorMessage = info?.outputData?.getString(RefreshEventsWorker.ERROR_MESSAGE)
+            errorMessage = info?.outputData?.getString(RefreshEventsWorker.ERROR_MESSAGE),
+            requestId = info?.id?.toString()
         )
     }
 

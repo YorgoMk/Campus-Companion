@@ -5,10 +5,14 @@ import okhttp3.MediaType
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.GET
+import retrofit2.http.Query
 
 interface CampusApi {
-    @GET("events/event")
-    suspend fun getEvents(): List<EventDto>
+    @GET("events/event?sortBy=id&order=asc")
+    suspend fun getEvents(
+        @Query("page") page: Int,
+        @Query("limit") limit: Int
+    ): List<EventDto>
 
     companion object {
         fun create(): CampusApi = Retrofit.Builder()

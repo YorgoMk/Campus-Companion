@@ -2,6 +2,7 @@ package com.inci.campuscompanion
 
 import com.inci.campuscompanion.data.CachedEvent
 import com.inci.campuscompanion.data.EventsDao
+import com.inci.campuscompanion.data.EventPagination
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import com.inci.campuscompanion.data.CampusApi
@@ -19,22 +20,16 @@ import org.junit.Test
 class EventsRepositoryTest {
     private fun repository(load: suspend () -> List<EventDto>) = EventsRepository(
         EventsRemoteDataSource(object : CampusApi {
-            override suspend fun getEvents() = load()
+            override suspend fun getEvents(page: Int, limit: Int) = load()
         }),
         MemoryEventsDao()
     )
 
-    private class MemoryEventsDao : EventsDao() {
-        val rows = MutableStateFlow<List<CachedEvent>>(emptyList())
-        override fun observeEvents() = rows
-        override suspend fun deleteEvents() { rows.value = emptyList() }
-        override suspend fun insertEvents(events: List<CachedEvent>) { rows.value = events }
-    }
 
     @Test fun refreshStoresMappedEventsInApiOrder() = runBlocking {
         val cache = MemoryEventsDao()
         val api = object : CampusApi {
-            override suspend fun getEvents() = listOf(
+            override suspend fun getEvents(page: Int, limit: Int) = listOf(
                 EventDto("2", "Second ID first", "date", "Campus"),
                 EventDto("1", "First ID second", "date")
             )
@@ -51,7 +46,7 @@ class EventsRepositoryTest {
         val old = listOf(CachedEvent("1", "Saved event", "date", "Campus", 0))
         cache.rows.value = old
         val api = object : CampusApi {
-            override suspend fun getEvents(): List<EventDto> = throw IOException("Offline")
+            override suspend fun getEvents(page: Int, limit: Int): List<EventDto> = throw IOException("Offline")
         }
         try {
             EventsRepository(EventsRemoteDataSource(api), cache).refreshEvents()
@@ -64,7 +59,7 @@ class EventsRepositoryTest {
     @Test fun emptySuccessfulRefreshClearsCache() = runBlocking {
         val cache = MemoryEventsDao()
         cache.rows.value = listOf(CachedEvent("1", "Old event", "date", "Campus", 0))
-        val api = object : CampusApi { override suspend fun getEvents() = emptyList<EventDto>() }
+        val api = object : CampusApi { override suspend fun getEvents(page: Int, limit: Int) = emptyList<EventDto>() }
         val repo = EventsRepository(EventsRemoteDataSource(api), cache)
         repo.refreshEvents()
         assertTrue(repo.events.first().isEmpty())
@@ -75,7 +70,7 @@ class EventsRepositoryTest {
         val old = listOf(CachedEvent("old", "Saved event", "date", "Campus", 0))
         cache.rows.value = old
         val api = object : CampusApi {
-            override suspend fun getEvents() = listOf(
+            override suspend fun getEvents(page: Int, limit: Int) = listOf(
                 EventDto("1", "First", "date"), EventDto("1", "Duplicate", "date")
             )
         }

@@ -46,7 +46,7 @@ class EventsPersistenceTest {
 
     private fun repository(load: suspend () -> List<EventDto>) = EventsRepository(
         EventsRemoteDataSource(object : CampusApi {
-            override suspend fun getEvents() = load()
+            override suspend fun getEvents(page: Int, limit: Int) = load()
         }), db.eventsDao()
     )
 
@@ -132,10 +132,47 @@ class EventsPersistenceTest {
             old.version = 1
         }
         val upgraded = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(AppDatabase.MIGRATION_1_2).build()
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
         try {
             assertEquals("Keep this task", upgraded.taskDao().getTasks().first().single().title)
             assertTrue(upgraded.eventsDao().observeEvents().first().isEmpty())
+        } finally { upgraded.close(); context.deleteDatabase(name) }
+    }
+
+    @Test fun pageCursorAndEventsSurviveDatabaseReopen() = runBlocking {
+        val name = "pages-test-${UUID.randomUUID()}"
+        val first = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+        try { first.eventsDao().replaceEvents(listOf(saved), nextPage = 2) } finally { first.close() }
+        val reopened = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+        try {
+            assertEquals(listOf(saved), reopened.eventsDao().observeEvents().first())
+            assertEquals(2, reopened.eventsDao().getPagination()?.nextPage)
+        } finally { reopened.close(); context.deleteDatabase(name) }
+    }
+
+    @Test fun stalePageCannotAppendAfterRefresh() = runBlocking {
+        db.eventsDao().replaceEvents(listOf(saved), nextPage = 2)
+        val before = requireNotNull(db.eventsDao().getPagination())
+        val refreshed = saved.copy(title = "Refreshed event")
+        db.eventsDao().replaceEvents(listOf(refreshed), nextPage = 2)
+        db.eventsDao().appendPage(listOf(saved.copy(id = "late", position = 1)), before, true)
+        assertEquals(listOf(refreshed), db.eventsDao().observeEvents().first())
+        assertEquals(2L, db.eventsDao().getPagination()?.generation)
+    }
+
+    @Test fun migrationFromVersionTwoPreservesCachedEvents() = runBlocking {
+        val name = "pagination-migration-${UUID.randomUUID()}"
+        context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { old ->
+            old.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, isCompleted INTEGER NOT NULL)")
+            old.execSQL("CREATE TABLE events (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, timeLabel TEXT NOT NULL, locationLabel TEXT NOT NULL, position INTEGER NOT NULL)")
+            old.execSQL("INSERT INTO events VALUES ('saved', 'Saved event', 'date', 'Campus', 0)")
+            old.version = 2
+        }
+        val upgraded = Room.databaseBuilder(context, AppDatabase::class.java, name)
+            .addMigrations(AppDatabase.MIGRATION_2_3).build()
+        try {
+            assertEquals(listOf(saved), upgraded.eventsDao().observeEvents().first())
+            assertEquals(null, upgraded.eventsDao().getPagination())
         } finally { upgraded.close(); context.deleteDatabase(name) }
     }
 

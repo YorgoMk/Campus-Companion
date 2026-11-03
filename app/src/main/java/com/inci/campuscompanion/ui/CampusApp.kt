@@ -56,6 +56,7 @@ fun AppNavHost(
             EventsScreen(
                 state = state,
                 onRefresh = eventsViewModel::refresh,
+                onLoadMore = eventsViewModel::loadMore,
                 onBack = { navController.popBackStack() }
             )
         }

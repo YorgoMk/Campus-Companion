@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -21,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -31,10 +33,15 @@ import com.inci.campuscompanion.work.RefreshStatus
 fun EventsScreen(
     state: EventsUiState,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val busy = state.refresh.status == RefreshStatus.Queued ||
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.refresh.status) {
+        if (state.refresh.status == RefreshStatus.Current) listState.scrollToItem(0)
+    }
+    val busy = state.refreshPending || state.refresh.status == RefreshStatus.Queued ||
         state.refresh.status == RefreshStatus.Refreshing
     Scaffold(
         modifier = modifier,
@@ -47,7 +54,7 @@ fun EventsScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = onRefresh, enabled = !busy) { Text("Refresh") }
+                    TextButton(onClick = onRefresh, enabled = !busy && !state.loadMore.loading) { Text("Refresh") }
                 }
             )
         }
@@ -69,8 +76,8 @@ fun EventsScreen(
                 }
             }
             if (state.events.isNotEmpty()) {
-                LazyColumn(Modifier.weight(1f)) {
-                    items(state.events, key = { it.id }) { event ->
+                LazyColumn(Modifier.weight(1f), state = listState) {
+                    items(state.events, key = { "event:${it.id}" }) { event ->
                         Column(
                             Modifier.fillMaxWidth().padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -80,6 +87,28 @@ fun EventsScreen(
                             Text(event.locationLabel)
                         }
                         HorizontalDivider()
+                    }
+                    item(key = "pagination-footer") {
+                        Column(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            when {
+                                state.loadMore.loading -> {
+                                    CircularProgressIndicator()
+                                    Text("Loading more events...")
+                                }
+                                state.loadMore.errorMessage != null -> {
+                                    Text(state.loadMore.errorMessage)
+                                    TextButton(onClick = onLoadMore, enabled = !busy) { Text("Retry loading more") }
+                                }
+                                state.canLoadMore -> TextButton(onClick = onLoadMore, enabled = !busy) {
+                                    Text("Load more")
+                                }
+                                else -> Text("All events loaded.")
+                            }
+                        }
                     }
                 }
             } else {
