@@ -25,7 +25,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,11 +39,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.inci.campuscompanion.data.CampusApi
-import com.inci.campuscompanion.data.EventsRemoteDataSource
-import com.inci.campuscompanion.data.EventsRepository
-import com.inci.campuscompanion.ui.EventsViewModel
-import com.inci.campuscompanion.ui.EventsScreen
+import androidx.work.WorkManager
+import com.inci.campuscompanion.data.EventsDependencies
+import com.inci.campuscompanion.ui.CampusApp
+import com.inci.campuscompanion.work.EventsRefreshScheduler
 import com.inci.campuscompanion.data.AppDatabase
 import com.inci.campuscompanion.data.TaskRepository
 import com.inci.campuscompanion.data.UserPreferencesRepository
@@ -66,37 +64,13 @@ class MainActivity : ComponentActivity() {
             MainViewModel.Factory(preferencesRepository, taskRepository)
         }
 
-        val eventsViewModel: EventsViewModel by viewModels {
-            EventsViewModel.Factory(EventsRepository(EventsRemoteDataSource(CampusApi.create())))
-        }
+        val eventsRepository = EventsDependencies.repository(applicationContext)
+        val refreshScheduler = EventsRefreshScheduler(WorkManager.getInstance(applicationContext))
 
         setContent {
-            val eventsState by eventsViewModel.uiState.collectAsStateWithLifecycle()
-            var showEvents by remember { mutableStateOf(false) }
             val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
-            val tasks by viewModel.tasks.collectAsStateWithLifecycle()
-
             CampusCompanionTheme(darkTheme = isDarkMode) {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Column(Modifier.padding(innerPadding)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            TextButton(onClick = { showEvents = false }) { Text("Tasks") }
-                            TextButton(onClick = { showEvents = true }) { Text("Events") }
-                        }
-                        if (showEvents) {
-                            EventsScreen(state = eventsState, onRefresh = eventsViewModel::refresh)
-                        } else {
-                            TaskScreen(
-                                isDarkMode = isDarkMode,
-                                onToggleDarkMode = { viewModel.toggleDarkMode(it) },
-                                tasks = tasks,
-                                onToggleTask = { viewModel.toggleTaskCompletion(it) },
-                                onAddTask = { title, description -> viewModel.upsertTask(title, description) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
+                CampusApp(viewModel, eventsRepository, refreshScheduler)
             }
         }
     }
@@ -109,6 +83,7 @@ fun TaskScreen(
     tasks: List<Task>,
     onToggleTask: (Task) -> Unit,
     onAddTask: (String, String) -> Unit,
+    onOpenEvents: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
@@ -133,6 +108,9 @@ fun TaskScreen(
             }
 
             HorizontalDivider()
+            TextButton(onClick = onOpenEvents, modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text("Campus events")
+            }
 
             if (tasks.isEmpty()) {
                 Box(
@@ -291,7 +269,8 @@ fun TaskPreview() {
                 Task(2, "Task 2", "Description 2", true)
             ),
             onToggleTask = {},
-            onAddTask = { _, _ -> }
+            onAddTask = { _, _ -> },
+            onOpenEvents = {}
         )
     }
 }

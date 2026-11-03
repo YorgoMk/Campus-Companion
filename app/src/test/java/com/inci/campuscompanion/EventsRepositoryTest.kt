@@ -1,5 +1,9 @@
 package com.inci.campuscompanion
 
+import com.inci.campuscompanion.data.CachedEvent
+import com.inci.campuscompanion.data.EventsDao
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import com.inci.campuscompanion.data.CampusApi
 import com.inci.campuscompanion.data.EventDto
 import com.inci.campuscompanion.data.EventsRemoteDataSource
@@ -16,8 +20,72 @@ class EventsRepositoryTest {
     private fun repository(load: suspend () -> List<EventDto>) = EventsRepository(
         EventsRemoteDataSource(object : CampusApi {
             override suspend fun getEvents() = load()
-        })
+        }),
+        MemoryEventsDao()
     )
+
+    private class MemoryEventsDao : EventsDao() {
+        val rows = MutableStateFlow<List<CachedEvent>>(emptyList())
+        override fun observeEvents() = rows
+        override suspend fun deleteEvents() { rows.value = emptyList() }
+        override suspend fun insertEvents(events: List<CachedEvent>) { rows.value = events }
+    }
+
+    @Test fun refreshStoresMappedEventsInApiOrder() = runBlocking {
+        val cache = MemoryEventsDao()
+        val api = object : CampusApi {
+            override suspend fun getEvents() = listOf(
+                EventDto("2", "Second ID first", "date", "Campus"),
+                EventDto("1", "First ID second", "date")
+            )
+        }
+        val repo = EventsRepository(EventsRemoteDataSource(api), cache)
+        repo.refreshEvents()
+        assertEquals(listOf("2", "1"), repo.events.first().map { it.id })
+        assertEquals(listOf(0, 1), cache.rows.value.map { it.position })
+        assertEquals("TBA", repo.events.first().last().locationLabel)
+    }
+
+    @Test fun failedRefreshPreservesCachedContent() = runBlocking {
+        val cache = MemoryEventsDao()
+        val old = listOf(CachedEvent("1", "Saved event", "date", "Campus", 0))
+        cache.rows.value = old
+        val api = object : CampusApi {
+            override suspend fun getEvents(): List<EventDto> = throw IOException("Offline")
+        }
+        try {
+            EventsRepository(EventsRemoteDataSource(api), cache).refreshEvents()
+            throw AssertionError("Expected connection failure")
+        } catch (expected: IOException) {
+            assertEquals(old, cache.rows.value)
+        }
+    }
+
+    @Test fun emptySuccessfulRefreshClearsCache() = runBlocking {
+        val cache = MemoryEventsDao()
+        cache.rows.value = listOf(CachedEvent("1", "Old event", "date", "Campus", 0))
+        val api = object : CampusApi { override suspend fun getEvents() = emptyList<EventDto>() }
+        val repo = EventsRepository(EventsRemoteDataSource(api), cache)
+        repo.refreshEvents()
+        assertTrue(repo.events.first().isEmpty())
+    }
+
+    @Test fun duplicateIdsDoNotReplaceValidCache() = runBlocking {
+        val cache = MemoryEventsDao()
+        val old = listOf(CachedEvent("old", "Saved event", "date", "Campus", 0))
+        cache.rows.value = old
+        val api = object : CampusApi {
+            override suspend fun getEvents() = listOf(
+                EventDto("1", "First", "date"), EventDto("1", "Duplicate", "date")
+            )
+        }
+        try {
+            EventsRepository(EventsRemoteDataSource(api), cache).refreshEvents()
+            throw AssertionError("Expected invalid data failure")
+        } catch (expected: IllegalArgumentException) {
+            assertEquals(old, cache.rows.value)
+        }
+    }
 
     @Test fun decodesActualApiFieldNamesAndIgnoresUnusedFields() {
         val dto = Json { ignoreUnknownKeys = true }.decodeFromString<EventDto>(
